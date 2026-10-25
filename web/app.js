@@ -103,7 +103,7 @@ function buildList() {
   list.textContent = '';
   rows = [];
   if (!S.open) {
-    list.innerHTML = '<p class="empty">按左上角「開啟」選擇逐字稿 (.md)。</p>';
+    list.innerHTML = '<p class="empty">按左上角「開啟」選擇逐字稿 (.md)，或把檔案拖進來。</p>';
     return;
   }
   if (S.segments.length === 0) {
@@ -394,6 +394,59 @@ async function pickAudio() {
     setAudio();
   } catch (e) { alert(e.message); }
 }
+
+// ---------- drag & drop ----------
+// A page never sees a dropped file's path, so send name/size/mtime (plus any
+// file:// URIs the browser offers) and let the server work out which file it is.
+const AUDIO_EXT = /\.(mp3|m4a|wav)$/i;
+let dragDepth = 0;
+
+function hasFiles(e) {
+  return e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+}
+
+async function openDropped(files, uris) {
+  files = files.filter((f) => f.name);
+  if (!files.length) return;
+  if (files.some((f) => /\.md$/i.test(f.name)) && !(await guardDirty())) return;
+  try {
+    const st = await api('POST', '/api/open-dropped', {
+      files: files.map((f) => ({ name: f.name, size: f.size, mtimeMs: f.lastModified })),
+      uris,
+    });
+    if (files.some((f) => /\.md$/i.test(f.name))) {
+      adopt(st);
+      if (!st.hasAudio) toast('找不到對應的 mp3，請按「音檔」或一起拖入');
+    } else {
+      S = st; // audio only: keep unsaved edits
+      setAudio();
+    }
+  } catch (e) { alert(e.message); }
+}
+
+document.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add('dropping');
+});
+document.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); // without this the browser would navigate to / play the file
+  e.dataTransfer.dropEffect = 'copy';
+});
+document.addEventListener('dragleave', (e) => {
+  if (!hasFiles(e)) return;
+  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dropping'); }
+});
+document.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dropping');
+  const uris = (e.dataTransfer.getData('text/uri-list') || '').split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
+  openDropped([...e.dataTransfer.files], uris);
+});
 
 async function save() {
   if (!S || !S.open) return;

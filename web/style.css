@@ -119,3 +119,12 @@ mark.sus.done { background: var(--sus-done-bg); }
   font-size: 14px; opacity: 0; pointer-events: none; transition: opacity 0.2s;
 }
 #toast.show { opacity: 0.95; }
+
+body.dropping::after {
+  content: "放開以開啟檔案（.md 逐字稿、可同時拖入 mp3）";
+  position: fixed; inset: 8px; z-index: 100; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 3px dashed var(--accent); border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--accent); font-size: 22px;
+}

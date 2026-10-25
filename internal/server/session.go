@@ -115,6 +115,20 @@ func (s *Session) AudioPath() string {
 	return s.audioPath
 }
 
+// SearchDirs lists folders worth walking to find a dropped file: where the
+// open transcript and its audio live.
+func (s *Session) SearchDirs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var dirs []string
+	for _, p := range []string{s.mdPath, s.audioPath} {
+		if p != "" {
+			dirs = append(dirs, filepath.Dir(p))
+		}
+	}
+	return dirs
+}
+
 // State snapshots the session.
 func (s *Session) State() State {
 	s.mu.Lock()

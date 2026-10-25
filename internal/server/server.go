@@ -9,10 +9,12 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"sermonproof/internal/audio"
 	"sermonproof/internal/filedlg"
+	"sermonproof/internal/locate"
 	"sermonproof/internal/transcript"
 	"sermonproof/web"
 )
@@ -50,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/state", s.api(s.handleState))
 	mux.HandleFunc("POST /api/pick-md", s.api(s.handlePickMD))
 	mux.HandleFunc("POST /api/pick-audio", s.api(s.handlePickAudio))
+	mux.HandleFunc("POST /api/open-dropped", s.api(s.handleOpenDropped))
 	mux.HandleFunc("POST /api/reload", s.api(s.handleReload))
 	mux.HandleFunc("POST /api/save", s.api(s.handleSave))
 	mux.HandleFunc("PUT /api/review", s.api(s.handleReview))
@@ -151,6 +154,78 @@ func (s *Server) handlePickAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.Sess.State())
+}
+
+// handleOpenDropped opens files dragged onto the page. The browser only reports
+// name / size / mtime, so each is resolved to a real path by internal/locate.
+// A dropped .md is opened first (which pairs its own audio); a dropped audio
+// file then overrides the pairing, or is applied to the transcript already open.
+func (s *Server) handleOpenDropped(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Files []struct {
+			Name    string `json:"name"`
+			Size    int64  `json:"size"`
+			MtimeMs int64  `json:"mtimeMs"`
+		} `json:"files"`
+		URIs []string `json:"uris"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var mdPath, audioPath string
+	for _, f := range req.Files {
+		kind := dropKind(f.Name)
+		if kind == "" {
+			writeErr(w, http.StatusBadRequest, "不支援的檔案："+f.Name+"（只收 .md 與 mp3／m4a／wav）")
+			return
+		}
+		if (kind == "md" && mdPath != "") || (kind == "audio" && audioPath != "") {
+			writeErr(w, http.StatusBadRequest, "一次只能拖入一個逐字稿和一個音檔")
+			return
+		}
+		p, err := locate.Find(locate.Query{Name: f.Name, Size: f.Size, MtimeMs: f.MtimeMs, URIs: req.URIs}, s.Sess.SearchDirs())
+		if err != nil {
+			writeErr(w, http.StatusNotFound, f.Name+"：\n"+err.Error())
+			return
+		}
+		if kind == "md" {
+			mdPath = p
+		} else {
+			audioPath = p
+		}
+	}
+	if mdPath == "" && audioPath == "" {
+		writeErr(w, http.StatusBadRequest, "沒有收到檔案")
+		return
+	}
+	if mdPath == "" && !s.Sess.State().Open {
+		writeErr(w, http.StatusBadRequest, "請先拖入逐字稿 (.md)")
+		return
+	}
+	if mdPath != "" {
+		if err := s.Sess.OpenMD(mdPath); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if audioPath != "" {
+		if err := s.Sess.SetAudio(audioPath); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.Sess.State())
+}
+
+func dropKind(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".md":
+		return "md"
+	case ".mp3", ".m4a", ".wav":
+		return "audio"
+	}
+	return ""
 }
 
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
