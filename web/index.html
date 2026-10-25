@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sermon-proof</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body data-token="__TOKEN__">
+<div id="bar">
+  <div id="top">
+    <button id="btnOpen" title="選擇逐字稿 .md">開啟</button>
+    <button id="btnAudio" title="手動選擇音檔">音檔</button>
+    <span id="fileName">尚未開啟檔案</span>
+    <span id="dirty"></span>
+    <span class="spacer"></span>
+    <span id="progress"></span>
+    <button id="btnSave" class="primary" title="⌘S">存檔</button>
+  </div>
+  <div id="player">
+    <div class="row">
+      <button id="btnPrev" title="上一段 (↑)">⏮ 上一段</button>
+      <button id="btnBack" title="倒退 3 秒 (←)">−3s</button>
+      <button id="btnPlay" class="primary" title="播放/暫停 (空白鍵)">▶ 播放</button>
+      <button id="btnFwd" title="前進 3 秒 (→)">+3s</button>
+      <button id="btnNext" title="下一段 (↓)">下一段 ⏭</button>
+      <button id="btnReplay" title="重播本段 (R)">↺ 重播本段</button>
+      <span class="spacer"></span>
+      <span id="speeds" title="速度 ([ / ])"></span>
+      <label class="lead" title="跳轉時提前播放的秒數（段落時間為自動對齊，未經校準）">提前
+        <select id="lead">
+          <option value="0">0 秒</option>
+          <option value="0.5" selected>0.5 秒</option>
+          <option value="1">1 秒</option>
+          <option value="2">2 秒</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <span id="cur" class="mono">00:00.0</span>
+      <input id="seek" type="range" min="0" max="0" step="0.1" value="0">
+      <span id="dur" class="mono">00:00</span>
+    </div>
+    <div id="noAudio" hidden>找不到對應的 mp3，請按「音檔」手動選擇。</div>
+  </div>
+</div>
+<main>
+  <section id="list"><p class="empty">按左上角「開啟」選擇逐字稿 (.md)。</p></section>
+  <aside id="side">
+    <h2>存疑處</h2>
+    <label class="filter"><input type="checkbox" id="onlyOpen"> 只顯示未確認</label>
+    <ol id="suspects"></ol>
+    <details id="help">
+      <summary>快捷鍵</summary>
+      <table>
+        <tr><th colspan="2">瀏覽模式</th></tr>
+        <tr><td>空白鍵</td><td>播放／暫停</td></tr>
+        <tr><td>← / →</td><td>倒退／前進 3 秒</td></tr>
+        <tr><td>↑ / ↓</td><td>上一段／下一段</td></tr>
+        <tr><td>R</td><td>重播本段</td></tr>
+        <tr><td>[ / ]</td><td>調慢／調快</td></tr>
+        <tr><td>Enter</td><td>編輯目前段</td></tr>
+        <tr><td>N</td><td>跳到下一個未確認的存疑處</td></tr>
+        <tr><td>C</td><td>切換本段「已校對」</td></tr>
+        <tr><th colspan="2">編輯模式</th></tr>
+        <tr><td>Esc</td><td>播放／暫停（不離開編輯）</td></tr>
+        <tr><td>⌘Enter</td><td>完成本段</td></tr>
+        <tr><td>⌘↑ / ⌘↓</td><td>編輯上／下一段並跳過去</td></tr>
+        <tr><td>⌘[ / ⌘]</td><td>倒退／前進 3 秒</td></tr>
+        <tr><th colspan="2">全域</th></tr>
+        <tr><td>⌘S</td><td>存檔</td></tr>
+      </table>
+    </details>
+  </aside>
+</main>
+<audio id="audio" preload="metadata"></audio>
+<div id="toast" role="status"></div>
+<script src="/app.js"></script>
+</body>
+</html>
