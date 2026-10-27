@@ -2,6 +2,19 @@
 
 邊聽音檔邊人工校對講道逐字稿，直接修改 `.md`。Go 標準庫 + 原生 HTML/JS/CSS，單一執行檔，只綁 `127.0.0.1`。
 
+## 安裝
+
+發行檔提供 Windows x64、macOS Apple Silicon、Linux x64。
+
+```bash
+npm i -g @fhlnet/sermon-proof     # 需要 Node.js 16+，npm 會自動挑對應系統的執行檔
+sermon-proof 檔名.md
+```
+
+或到 GitHub Release 下載壓縮檔（`sermon-proof_<版本>_<windows|darwin|linux>_<amd64|arm64>`，附 `SHA256SUMS.txt`），解壓後直接執行。目前沒有數位簽章與 Apple 公證，第一次執行 macOS（Gatekeeper）或 Windows（SmartScreen）可能跳警告。
+
+選檔視窗：macOS 用 osascript，Windows 用 PowerShell，Linux 需要 `zenity` 或 `kdialog`（沒有就改用拖曳或命令列帶檔名）。
+
 ## 建置與執行
 
 ```bash
@@ -32,3 +45,14 @@ SERMON_PROOF_CORPUS=/path/to/N59_雅各書 go test ./internal/transcript   # 對
 ```
 
 開發紀錄在 `ai-log/`（給 AI 讀，英文）。
+
+## 發行（維護者）
+
+版本號在 `internal/version/version.go`（三段式 semver）。改版、commit 後：
+
+```bash
+go run ./tools/release        # dist/ 產生三個平台壓縮檔與 SHA256SUMS.txt（有未 commit 的改動會拒絕）
+go run ./tools/npmpack        # dist/npm/ 產生四個 .tgz（三個平台包 + 啟動器包），並印出 npm publish 指令
+```
+
+兩支工具都不會上傳。npm 要先發三個平台包、最後發 `@fhlnet/sermon-proof`；GitHub Release 則自行把 `dist/` 的壓縮檔與 `SHA256SUMS.txt` 附上。

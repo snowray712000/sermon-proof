@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 專案定位
 
-**sermon-proof**：本機小工具，讓使用者邊聽音檔邊人工校對講道逐字稿（`.md`）並直接寫回。Go 後端（只用標準庫）+ 原生 HTML/JS/CSS 前端（`go:embed` 打包成單一執行檔），伺服器只綁 `127.0.0.1`，由瀏覽器操作。平台：macOS（Apple Silicon）。
+**sermon-proof**：本機小工具，讓使用者邊聽音檔邊人工校對講道逐字稿（`.md`）並直接寫回。Go 後端（只用標準庫）+ 原生 HTML/JS/CSS 前端（`go:embed` 打包成單一執行檔），伺服器只綁 `127.0.0.1`，由瀏覽器操作。平台：macOS（Apple Silicon，主要開發與測試環境）；也發行 Windows x64、Linux x64（見 `ai-log/2026/s4/1027a_*`）。
 
 逐字稿由兄弟專案 `../語音辨識/` 的流程產生（見其 `AGENTS.md`）。範例檔：`../語音辨識/信望愛/講道/康來昌/N59_雅各書/`（音檔與 `.md` 同資料夾）。**那個資料夾是使用者的原始資料，唯讀參考，不要修改、不要把工具輸出寫進去。**測試用的樣本複製在 `testdata/`。
 
@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Go 已安裝（`/opt/homebrew/bin/go`），不需要 brew。
 - 建置：`go build -o sermon-proof .`；測試：`go test ./...`；執行：`./sermon-proof 檔名.md`（無參數則啟動後按「開啟」）。
+- 發行：`go run ./tools/release`（壓縮檔 + SHA256SUMS）、`go run ./tools/npmpack`（`@fhlnet/sermon-proof` 的 npm 包，optionalDependencies 結構）；版本在 `internal/version`。工具不上傳，`npm publish` 由使用者手動執行。tools 只用標準庫。Windows／Linux 的選檔視窗未實機測過。
 - 目錄：`internal/transcript`（解析／輸出／配對／存檔／review sidecar）、`internal/audio`（mp3 補 Info/Xing 標頭，修正瀏覽器 seek 偏移，見 `ai-log/2026/s4/1026c_*`）、`internal/filedlg`（osascript 選檔）、`internal/server`（HTTP API）、`web/`（前端，embed）。
 - 疑似標記 `[疑似：詞，mm:ss.mmm]` 的 regex 目前只在前端（`web/app.js`）使用，改格式時要同步檢查。
 

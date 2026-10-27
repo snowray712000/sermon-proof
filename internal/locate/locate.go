@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -86,10 +87,17 @@ func uriPath(u string) (string, bool) {
 	if err != nil || pu.Scheme != "file" || pu.Path == "" {
 		return "", false
 	}
-	return filepath.Clean(pu.Path), true
+	p := pu.Path
+	if runtime.GOOS == "windows" && len(p) > 2 && p[0] == '/' && p[2] == ':' {
+		p = p[1:] // file:///C:/dir → C:/dir
+	}
+	return filepath.Clean(p), true
 }
 
 func spotlight(name string) []string {
+	if runtime.GOOS != "darwin" {
+		return nil // mdfind is macOS only; the caller falls back to a folder walk.
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "mdfind", "-name", name).Output()
