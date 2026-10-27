@@ -63,6 +63,11 @@ func Find(q Query, dirs []string) (string, error) {
 			walk(d, q.Name, add)
 		}
 	}
+	if len(found) == 0 {
+		// Nothing is open yet (or the file is elsewhere) and there is no index
+		// to ask (Windows, Linux): search the home folder and drives instead.
+		walkWide(q.Name, add)
+	}
 
 	switch len(found) {
 	case 0:
@@ -88,10 +93,14 @@ func uriPath(u string) (string, bool) {
 		return "", false
 	}
 	p := pu.Path
-	if runtime.GOOS == "windows" && len(p) > 2 && p[0] == '/' && p[2] == ':' {
-		p = p[1:] // file:///C:/dir → C:/dir
+	if runtime.GOOS == "windows" {
+		if len(p) > 2 && p[0] == '/' && p[2] == ':' {
+			p = p[1:] // file:///C:/dir → C:/dir
+		} else if pu.Host != "" && pu.Host != "localhost" {
+			p = "//" + pu.Host + p // file://server/share/x → \\server\share\x
+		}
 	}
-	return filepath.Clean(p), true
+	return filepath.Clean(filepath.FromSlash(p)), true
 }
 
 func spotlight(name string) []string {
@@ -117,21 +126,86 @@ func spotlight(name string) []string {
 // sibling folders, under dir's parent as well.
 func walk(dir, name string, add func(string)) {
 	for _, root := range []string{dir, filepath.Dir(dir)} {
-		base := strings.Count(root, string(filepath.Separator))
-		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
+		walkTree(root, name, walkDepth, time.Time{}, add)
+	}
+}
+
+const (
+	wideDepth    = 6
+	wideDeadline = 20 * time.Second
+)
+
+// wideRoots lists where walkWide looks, cheapest first; a variable so tests can
+// point it at a temp folder.
+var wideRoots = func() []string {
+	var roots []string
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, home)
+	}
+	if runtime.GOOS == "windows" {
+		for c := 'C'; c <= 'Z'; c++ {
+			d := string(c) + `:\`
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				roots = append(roots, d)
+			}
+		}
+	}
+	return roots
+}
+
+// walkWide is the last resort: search each root in turn and stop at the first
+// one that yields a match, so ambiguity is still detected within that root.
+func walkWide(name string, add func(string)) {
+	deadline := time.Now().Add(wideDeadline)
+	hit := false
+	for _, root := range wideRoots() {
+		walkTree(root, name, wideDepth, deadline, func(p string) { hit = true; add(p) })
+		if hit || time.Now().After(deadline) {
+			return
+		}
+	}
+}
+
+// skipDir names folders never worth entering: hidden ones and system or
+// package trees that are huge and cannot hold a transcript.
+func skipDir(n string) bool {
+	if strings.HasPrefix(n, ".") || strings.HasPrefix(n, "$") {
+		return true
+	}
+	switch strings.ToLower(n) {
+	case "appdata", "node_modules", "windows", "program files", "program files (x86)",
+		"programdata", "system volume information", "library":
+		return true
+	}
+	return false
+}
+
+// walkTree reports files called name under root, at most depth folders deep. A
+// zero deadline means no time limit.
+func walkTree(root, name string, depth int, deadline time.Time, add func(string)) {
+	base := strings.Count(filepath.Clean(root), string(filepath.Separator))
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
-			if d.IsDir() {
-				if strings.Count(p, string(filepath.Separator))-base >= walkDepth {
-					return filepath.SkipDir
-				}
-				return nil
+			return nil
+		}
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			if p != root && !deadline.IsZero() && skipDir(d.Name()) {
+				return filepath.SkipDir
 			}
-			if d.Name() == name {
-				add(p)
+			if strings.Count(p, string(filepath.Separator))-base >= depth {
+				return filepath.SkipDir
 			}
 			return nil
-		})
-	}
+		}
+		if d.Name() == name {
+			add(p)
+		}
+		return nil
+	})
 }

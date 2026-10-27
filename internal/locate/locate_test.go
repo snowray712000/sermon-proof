@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// Keep the wide fallback away from the real home folder unless a test opts in.
+func init() { wideRoots = func() []string { return nil } }
+
 func mk(t *testing.T, p, body string, mt time.Time) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -50,5 +53,24 @@ func TestFindByURIAndAmbiguity(t *testing.T) {
 	mk(t, filepath.Join(root, "copy", "x.md"), "hello", mt)
 	if _, err := Find(Query{Name: "x.md", Size: 5, MtimeMs: mt.UnixMilli()}, []string{filepath.Join(root, "copy")}); err == nil {
 		t.Fatal("two identical files must be reported as ambiguous")
+	}
+}
+
+func TestFindByWideWalkWhenNothingIsOpen(t *testing.T) {
+	root := t.TempDir()
+	mt := time.Unix(1_700_000_000, 0)
+	p := filepath.Join(root, "信望愛", "講道", "x.md")
+	mk(t, p, "hello", mt)
+	mk(t, filepath.Join(root, ".hidden", "x.md"), "hello", mt) // hidden folders are skipped
+	old := wideRoots
+	wideRoots = func() []string { return []string{root} }
+	defer func() { wideRoots = old }()
+
+	got, err := Find(Query{Name: "x.md", Size: 5, MtimeMs: mt.UnixMilli()}, nil)
+	if err != nil || got != p {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := Find(Query{Name: "x.md", Size: 6, MtimeMs: mt.UnixMilli()}, nil); err != ErrNotFound {
+		t.Fatalf("size mismatch should not match, got %v", err)
 	}
 }
