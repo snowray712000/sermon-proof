@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,7 +45,11 @@ func TestFindByURIAndAmbiguity(t *testing.T) {
 	mt := time.Unix(1_700_000_000, 0)
 	p := filepath.Join(root, "講道", "x.md")
 	mk(t, p, "hello", mt)
-	uri := (&url.URL{Scheme: "file", Path: p}).String()
+	up := filepath.ToSlash(p)
+	if !strings.HasPrefix(up, "/") {
+		up = "/" + up // Windows: C:/dir → /C:/dir
+	}
+	uri := (&url.URL{Scheme: "file", Path: up}).String()
 	got, err := Find(Query{Name: "x.md", Size: 5, MtimeMs: mt.UnixMilli(), URIs: []string{uri}}, nil)
 	if err != nil || got != p {
 		t.Fatalf("got %q, %v", got, err)

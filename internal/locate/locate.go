@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -126,13 +128,13 @@ func spotlight(name string) []string {
 // sibling folders, under dir's parent as well.
 func walk(dir, name string, add func(string)) {
 	for _, root := range []string{dir, filepath.Dir(dir)} {
-		walkTree(root, name, walkDepth, time.Time{}, add)
+		walkTree(root, name, walkDepth, time.Time{}, nil, add)
 	}
 }
 
 const (
-	wideDepth    = 6
-	wideDeadline = 20 * time.Second
+	wideDepth    = 12
+	wideDeadline = 15 * time.Second // per root, so one huge drive cannot starve the rest
 )
 
 // wideRoots lists where walkWide looks, cheapest first; a variable so tests can
@@ -153,17 +155,27 @@ var wideRoots = func() []string {
 	return roots
 }
 
-// walkWide is the last resort: search each root in turn and stop at the first
-// one that yields a match, so ambiguity is still detected within that root.
+// walkWide is the last resort: search every root in parallel and stop all of them
+// once one yields a match.
 func walkWide(name string, add func(string)) {
-	deadline := time.Now().Add(wideDeadline)
-	hit := false
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		stop atomic.Bool
+	)
 	for _, root := range wideRoots() {
-		walkTree(root, name, wideDepth, deadline, func(p string) { hit = true; add(p) })
-		if hit || time.Now().After(deadline) {
-			return
-		}
+		wg.Add(1)
+		go func(root string) {
+			defer wg.Done()
+			walkTree(root, name, wideDepth, time.Now().Add(wideDeadline), &stop, func(p string) {
+				mu.Lock()
+				defer mu.Unlock()
+				add(p)
+				stop.Store(true)
+			})
+		}(root)
 	}
+	wg.Wait()
 }
 
 // skipDir names folders never worth entering: hidden ones and system or
@@ -182,7 +194,7 @@ func skipDir(n string) bool {
 
 // walkTree reports files called name under root, at most depth folders deep. A
 // zero deadline means no time limit.
-func walkTree(root, name string, depth int, deadline time.Time, add func(string)) {
+func walkTree(root, name string, depth int, deadline time.Time, stop *atomic.Bool, add func(string)) {
 	base := strings.Count(filepath.Clean(root), string(filepath.Separator))
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
