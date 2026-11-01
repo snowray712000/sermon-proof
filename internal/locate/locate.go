@@ -17,7 +17,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -42,8 +41,13 @@ func Find(q Query, dirs []string) (string, error) {
 		if !matches(p, q) {
 			return
 		}
+		st, err := os.Stat(p)
+		if err != nil {
+			return
+		}
 		for _, f := range found {
-			if f == p {
+			// Overlapping roots reach one file by differently spelled paths.
+			if fst, err := os.Stat(f); err == nil && os.SameFile(st, fst) {
 				return
 			}
 		}
@@ -62,6 +66,13 @@ func Find(q Query, dirs []string) (string, error) {
 	}
 	if len(found) == 0 {
 		for _, d := range dirs {
+			walk(d, q.Name, add)
+		}
+	}
+	if len(found) == 0 {
+		// Folders of files opened earlier (also in previous runs) are where a
+		// dropped file almost always is; look there before scanning disks.
+		for _, d := range recentDirs() {
 			walk(d, q.Name, add)
 		}
 	}
@@ -128,7 +139,7 @@ func spotlight(name string) []string {
 // sibling folders, under dir's parent as well.
 func walk(dir, name string, add func(string)) {
 	for _, root := range []string{dir, filepath.Dir(dir)} {
-		walkTree(root, name, walkDepth, time.Time{}, nil, add)
+		walkTree(root, name, walkDepth, time.Time{}, add)
 	}
 }
 
@@ -155,23 +166,22 @@ var wideRoots = func() []string {
 	return roots
 }
 
-// walkWide is the last resort: search every root in parallel and stop all of them
-// once one yields a match.
+// walkWide is the last resort: search every root in parallel. A hit does not
+// stop the other roots, so identical copies on different drives are all seen and
+// reported as ambiguous; each root is bounded by wideDeadline instead.
 func walkWide(name string, add func(string)) {
 	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		stop atomic.Bool
+		wg sync.WaitGroup
+		mu sync.Mutex
 	)
 	for _, root := range wideRoots() {
 		wg.Add(1)
 		go func(root string) {
 			defer wg.Done()
-			walkTree(root, name, wideDepth, time.Now().Add(wideDeadline), &stop, func(p string) {
+			walkTree(root, name, wideDepth, time.Now().Add(wideDeadline), func(p string) {
 				mu.Lock()
 				defer mu.Unlock()
 				add(p)
-				stop.Store(true)
 			})
 		}(root)
 	}
@@ -194,7 +204,7 @@ func skipDir(n string) bool {
 
 // walkTree reports files called name under root, at most depth folders deep. A
 // zero deadline means no time limit.
-func walkTree(root, name string, depth int, deadline time.Time, stop *atomic.Bool, add func(string)) {
+func walkTree(root, name string, depth int, deadline time.Time, add func(string)) {
 	base := strings.Count(filepath.Clean(root), string(filepath.Separator))
 	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

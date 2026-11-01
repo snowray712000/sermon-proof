@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"sermonproof/internal/locate"
 	"sermonproof/internal/transcript"
 )
 
@@ -78,7 +79,9 @@ func (s *Session) OpenMD(path string) error {
 	s.audioPath = ""
 	if a, ok := transcript.PairAudio(abs); ok {
 		s.audioPath = a
+		locate.Remember(a)
 	}
+	locate.Remember(abs)
 	return nil
 }
 
@@ -94,6 +97,7 @@ func (s *Session) SetAudio(path string) error {
 	s.mu.Lock()
 	s.audioPath = abs
 	s.mu.Unlock()
+	locate.Remember(abs)
 	return nil
 }
 

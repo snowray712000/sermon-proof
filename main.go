@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
+	"sermonproof/internal/locate"
 	"sermonproof/internal/server"
 	"sermonproof/internal/version"
 )
@@ -41,6 +43,9 @@ func main() {
 		return
 	}
 
+	if dir, err := os.UserConfigDir(); err == nil {
+		locate.SetRecentFile(filepath.Join(dir, "sermon-proof", "recent-dirs.json"))
+	}
 	sess := &server.Session{}
 	var md, audio string
 	for _, a := range flag.Args() {
