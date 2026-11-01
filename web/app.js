@@ -12,6 +12,7 @@ let S = null;            // last state from the server
 let base = [];           // saved body per segment id
 const edits = new Map(); // segment id -> unsaved text
 let review = { segments: {}, suspects: {} };
+const suspectDrafts = new Map(); // suspect ms -> unsaved text in the side-list field
 let rows = [];           // row element per segment id
 let cur = 0;             // current segment id
 let pin = null;          // {id, ms}: keep `cur` on id until playback reaches ms
@@ -87,6 +88,7 @@ function adopt(st) {
   S = st;
   base = st.segments.map((s) => s.body);
   edits.clear();
+  suspectDrafts.clear();
   review = st.review || {};
   review.segments = review.segments || {};
   review.suspects = review.suspects || {};
@@ -227,18 +229,31 @@ function renderSuspects() {
     });
     const st = document.createElement('div');
     st.className = 'st';
-    st.append(s.text);
     const ts = document.createElement('div');
     ts.className = 'ts mono';
     ts.textContent = fmtClock(s.ms / 1000, true);
-    st.prepend(ts);
+    // The candidate wording is editable here: fix it, then 解除 puts the fixed text in the segment.
+    const word = document.createElement('input');
+    word.type = 'text';
+    word.className = 'word';
+    word.value = suspectDrafts.has(s.ms) ? suspectDrafts.get(s.ms) : s.text;
+    word.title = '可直接在這裡修正候選字，再按「解除」（Enter 亦可）';
+    word.addEventListener('click', (e) => e.stopPropagation());
+    word.addEventListener('input', () => suspectDrafts.set(s.ms, word.value));
+    word.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        removeSuspect(s, word.value);
+      }
+    });
+    st.append(ts, word);
     const un = document.createElement('button');
     un.className = 'un';
     un.textContent = '解除';
-    un.title = '把 [疑似：詞，時間] 換成「詞」（需再存檔）';
+    un.title = '把 [疑似：詞，時間] 換成欄位裡的文字（需再存檔）';
     un.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeSuspect(s);
+      removeSuspect(s, word.value);
     });
     li.append(cb, st, un);
     const opts = optionsOf(s.text);
@@ -258,7 +273,7 @@ function renderSuspects() {
         box.append(b);
       }
       li.append(box);
-      un.title = '兩個以上的候選都保留：換成「' + s.text + '」（需再存檔）';
+      un.title = '換成欄位裡的文字（預設為全部候選都保留，可先修改；需再存檔）';
     }
     li.addEventListener('click', () => jumpToSuspect(s.ms, s.segId));
     list.append(li);
@@ -290,6 +305,7 @@ function removeSuspect(s, replacement = s.text) {
   const text = textOf(s.segId);
   const i = text.indexOf(s.raw);
   if (i < 0) return;
+  suspectDrafts.delete(s.ms);
   setText(s.segId, text.slice(0, i) + replacement + text.slice(i + s.raw.length));
   if (editingId === s.segId) rows[s.segId].querySelector('textarea').value = textOf(s.segId);
   renderBody(s.segId);
