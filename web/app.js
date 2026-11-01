@@ -241,6 +241,25 @@ function renderSuspects() {
       removeSuspect(s);
     });
     li.append(cb, st, un);
+    const opts = optionsOf(s.text);
+    if (opts.length > 1) {
+      // Several candidate wordings joined by ／: let the user keep just one.
+      const box = document.createElement('div');
+      box.className = 'opts';
+      for (const o of opts) {
+        const b = document.createElement('button');
+        b.className = 'opt';
+        b.textContent = o;
+        b.title = '只用這個：把 [疑似：…] 換成「' + o + '」（需再存檔）';
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeSuspect(s, o);
+        });
+        box.append(b);
+      }
+      li.append(box);
+      un.title = '兩個以上的候選都保留：換成「' + s.text + '」（需再存檔）';
+    }
     li.addEventListener('click', () => jumpToSuspect(s.ms, s.segId));
     list.append(li);
   }
@@ -262,11 +281,16 @@ function setReview(kind, key, on) {
   refreshAll();
 }
 
-function removeSuspect(s) {
+// Candidates inside a marker are separated by a full-width slash: 決志／覺知.
+function optionsOf(word) {
+  return word.split('／').filter((o) => o !== '');
+}
+
+function removeSuspect(s, replacement = s.text) {
   const text = textOf(s.segId);
   const i = text.indexOf(s.raw);
   if (i < 0) return;
-  setText(s.segId, text.slice(0, i) + s.text + text.slice(i + s.raw.length));
+  setText(s.segId, text.slice(0, i) + replacement + text.slice(i + s.raw.length));
   if (editingId === s.segId) rows[s.segId].querySelector('textarea').value = textOf(s.segId);
   renderBody(s.segId);
   refreshAll();

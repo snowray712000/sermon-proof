@@ -107,6 +107,8 @@ mark.sus.done { background: var(--sus-done-bg); }
 #suspects li.done .st { text-decoration: line-through; }
 #suspects .ts { font-size: 13px; color: var(--muted); }
 #suspects .un { font-size: 12px; padding: 0 6px; }
+#suspects .opts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px; }
+#suspects .opt { font-size: 14px; padding: 1px 8px; }
 #suspects .none { color: var(--muted); border: 0; background: none; cursor: default; }
 #help { margin-top: 16px; font-size: 14px; }
 #help table { border-collapse: collapse; margin-top: 6px; }
