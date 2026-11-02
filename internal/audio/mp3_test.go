@@ -153,3 +153,21 @@ func TestVBRGetsXingWithTOC(t *testing.T) {
 		}
 	}
 }
+
+func TestDuration(t *testing.T) {
+	// 1000 frames of 1152 samples at 44.1 kHz; an Info tag frame is not audio.
+	want := 1000 * 1152 * 1000 / 44100 // ms, truncated
+	for _, xing := range []bool{false, true} {
+		n := 1000
+		if xing {
+			n++
+		}
+		d, err := Duration(writeTmp(t, synthMP3(n, true, xing)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := int(d.Milliseconds()); got != want {
+			t.Fatalf("xing=%v: got %d ms, want %d", xing, got, want)
+		}
+	}
+}
