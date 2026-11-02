@@ -48,13 +48,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.Handle("GET /app.js", http.FileServerFS(web.FS))
 	mux.Handle("GET /style.css", http.FileServerFS(web.FS))
+	mux.Handle("GET /vttview.js", http.FileServerFS(web.FS))
 
 	mux.HandleFunc("GET /api/state", s.api(s.handleState))
 	mux.HandleFunc("POST /api/pick-md", s.api(s.handlePickMD))
 	mux.HandleFunc("POST /api/pick-audio", s.api(s.handlePickAudio))
 	mux.HandleFunc("POST /api/open-dropped", s.api(s.handleOpenDropped))
+	mux.HandleFunc("GET /api/siblings", s.api(s.handleSiblings))
+	mux.HandleFunc("POST /api/open-sibling", s.api(s.handleOpenSibling))
 	mux.HandleFunc("POST /api/reload", s.api(s.handleReload))
 	mux.HandleFunc("POST /api/save", s.api(s.handleSave))
+	mux.HandleFunc("POST /api/export-vtt", s.api(s.handleExportVTT))
 	mux.HandleFunc("PUT /api/review", s.api(s.handleReview))
 	mux.HandleFunc("GET /api/audio", s.api(s.handleAudio))
 	return s.guard(mux)
@@ -132,7 +136,7 @@ func (s *Server) handlePickMD(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.Sess.OpenMD(p); err != nil {
+	if err := s.Sess.Open(p); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -158,7 +162,7 @@ func (s *Server) handlePickAudio(w http.ResponseWriter, r *http.Request) {
 
 // handleOpenDropped opens files dragged onto the page. The browser only reports
 // name / size / mtime, so each is resolved to a real path by internal/locate.
-// A dropped .md is opened first (which pairs its own audio); a dropped audio
+// A dropped .md / .vtt is opened first (which pairs its own audio); a dropped audio
 // file then overrides the pairing, or is applied to the transcript already open.
 func (s *Server) handleOpenDropped(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -177,7 +181,7 @@ func (s *Server) handleOpenDropped(w http.ResponseWriter, r *http.Request) {
 	for _, f := range req.Files {
 		kind := dropKind(f.Name)
 		if kind == "" {
-			writeErr(w, http.StatusBadRequest, "不支援的檔案："+f.Name+"（只收 .md 與 mp3／m4a／wav）")
+			writeErr(w, http.StatusBadRequest, "不支援的檔案："+f.Name+"（只收 .md／.vtt 與 mp3／m4a／wav）")
 			return
 		}
 		if (kind == "md" && mdPath != "") || (kind == "audio" && audioPath != "") {
@@ -200,11 +204,11 @@ func (s *Server) handleOpenDropped(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mdPath == "" && !s.Sess.State().Open {
-		writeErr(w, http.StatusBadRequest, "請先拖入逐字稿 (.md)")
+		writeErr(w, http.StatusBadRequest, "請先拖入逐字稿 (.md／.vtt)")
 		return
 	}
 	if mdPath != "" {
-		if err := s.Sess.OpenMD(mdPath); err != nil {
+		if err := s.Sess.Open(mdPath); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -218,9 +222,34 @@ func (s *Server) handleOpenDropped(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.Sess.State())
 }
 
+func (s *Server) handleSiblings(w http.ResponseWriter, r *http.Request) {
+	list, err := s.Sess.Siblings()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// handleOpenSibling switches to another transcript in the same folder.
+func (s *Server) handleOpenSibling(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Sess.OpenSibling(req.Name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Sess.State())
+}
+
 func dropKind(name string) string {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".md":
+	case ".md", ".vtt":
 		return "md"
 	case ".mp3", ".m4a", ".wav":
 		return "audio"
@@ -253,6 +282,30 @@ func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 	default:
 		writeJSON(w, http.StatusOK, st)
+	}
+}
+
+// handleExportVTT writes the .vtt copy of the open .md. 409 "exists" asks the
+// page to confirm and resend with overwrite; 409 "conflict" is the usual hash check.
+func (s *Server) handleExportVTT(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Status    string `json:"status"`
+		Overwrite bool   `json:"overwrite"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	res, err := s.Sess.ExportVTT(req.Status, req.Overwrite)
+	switch {
+	case errors.Is(err, ErrVTTExists):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": res.Name + " 已存在", "code": "exists", "name": res.Name})
+	case errors.Is(err, transcript.ErrConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "磁碟上的檔案已被外部改動，請先重新載入", "code": "conflict"})
+	case err != nil:
+		writeErr(w, http.StatusBadRequest, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, res)
 	}
 }
 

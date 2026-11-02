@@ -9,19 +9,29 @@ import (
 
 var verSuffixRe = regexp.MustCompile(`-ver\d+$`)
 
-// IsOrigName reports whether name is a backup made by this tool ("X.orig.md").
+// IsOrigName reports whether name is a backup made by this tool ("X.orig.md",
+// "X.orig.vtt").
 func IsOrigName(name string) bool {
-	return strings.HasSuffix(strings.ToLower(name), ".orig.md")
+	n := strings.ToLower(name)
+	return strings.HasSuffix(n, ".orig.md") || strings.HasSuffix(n, ".orig.vtt")
 }
 
-// PairAudio finds the mp3 that belongs to a transcript by stripping the known
-// suffixes one at a time: N59_x-ver1-manual.md tries N59_x-ver1-manual.mp3,
+// IsVTTName reports whether name has the .vtt extension.
+func IsVTTName(name string) bool { return strings.EqualFold(filepath.Ext(name), ".vtt") }
+
+// IsTranscriptName reports whether name is a .md or .vtt transcript.
+func IsTranscriptName(name string) bool {
+	return IsVTTName(name) || strings.EqualFold(filepath.Ext(name), ".md")
+}
+
+// PairAudio finds the mp3 that belongs to a transcript (.md or .vtt) by stripping
+// the known suffixes one at a time: N59_x-ver1-manual.md tries N59_x-ver1-manual.mp3,
 // N59_x-ver1.mp3, then N59_x.mp3.
 func PairAudio(mdPath string) (string, bool) {
 	dir := filepath.Dir(mdPath)
 	base := filepath.Base(mdPath)
-	if strings.EqualFold(filepath.Ext(base), ".md") {
-		base = base[:len(base)-3]
+	if IsTranscriptName(base) {
+		base = base[:len(base)-len(filepath.Ext(base))]
 	}
 	for {
 		for _, ext := range []string{".mp3", ".MP3"} {

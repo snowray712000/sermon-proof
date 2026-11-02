@@ -46,6 +46,7 @@ body {
 #player { margin-top: 6px; }
 #player .row + .row { margin-top: 4px; }
 #fileName { font-weight: 600; }
+#meta { color: var(--muted); font-size: 13px; }
 #dirty { color: var(--edited); font-size: 14px; }
 #progress { color: var(--muted); font-size: 14px; }
 #noAudio { color: var(--edited); font-size: 14px; }
@@ -95,6 +96,18 @@ mark.sus.done { background: var(--sus-done-bg); }
 
 #side { position: sticky; top: 130px; align-self: start; max-height: calc(100vh - 150px); overflow: auto; }
 #side h2 { margin: 0 0 4px; font-size: 16px; }
+#files { margin-bottom: 12px; font-size: 14px; }
+#files summary { font-weight: 600; cursor: pointer; }
+#filesCount { color: var(--muted); font-weight: 400; }
+#fileList { list-style: none; margin: 4px 0 0; padding: 0; max-height: 28vh; overflow: auto; }
+#fileList li {
+  display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px;
+  cursor: pointer; line-height: 1.6; word-break: break-all;
+}
+#fileList li:hover { background: var(--active-bg); }
+#fileList li.cur { background: var(--active-bg); border-left: 3px solid var(--active-line); font-weight: 600; cursor: default; }
+#fileList .tag { margin-left: auto; flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
+#fileList .tag.warn { color: var(--edited); }
 .filter { font-size: 14px; color: var(--muted); display: block; margin-bottom: 6px; }
 #suspects { list-style: none; margin: 0; padding: 0; }
 #suspects li {

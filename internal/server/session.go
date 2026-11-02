@@ -10,6 +10,7 @@ import (
 
 	"sermonproof/internal/locate"
 	"sermonproof/internal/transcript"
+	"sermonproof/internal/vttexport"
 )
 
 // Session holds the one transcript currently open.
@@ -28,6 +29,10 @@ type Seg struct {
 	StartMs int    `json:"startMs"`
 	Time    string `json:"time"`
 	Body    string `json:"body"`
+	// EndMs is the cue's end (vtt only; 0 for md). ReadOnly marks a vtt cue
+	// the tool will not edit (payload has WebVTT tags it cannot round-trip).
+	EndMs    int  `json:"endMs,omitempty"`
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // State is the JSON returned by most endpoints.
@@ -41,6 +46,8 @@ type State struct {
 	HasOrig   bool               `json:"hasOrig"`
 	Hash      string             `json:"hash"`
 	EOL       string             `json:"eol"`
+	Format    string             `json:"format"` // "md" or "vtt"
+	Meta      []transcript.KV    `json:"meta"`   // vtt NOTE "key: value" lines, read only
 	Segments  []Seg              `json:"segments"`
 	Review    *transcript.Review `json:"review"`
 }
@@ -54,13 +61,13 @@ type Edit struct {
 // ErrNotOpen is returned when no transcript is loaded.
 var ErrNotOpen = errors.New("no transcript open")
 
-// OpenMD loads a transcript and pairs its audio.
-func (s *Session) OpenMD(path string) error {
+// Open loads a transcript (.md or .vtt) and pairs its audio.
+func (s *Session) Open(path string) error {
 	if transcript.IsOrigName(filepath.Base(path)) {
-		return errors.New("這是備份檔 (.orig.md)，請選原本的 .md")
+		return errors.New("這是備份檔 (.orig.md / .orig.vtt)，請選原本的逐字稿")
 	}
-	if !strings.EqualFold(filepath.Ext(path), ".md") {
-		return errors.New("不是 .md 檔")
+	if !transcript.IsTranscriptName(path) {
+		return errors.New("不是 .md 或 .vtt 檔")
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -70,10 +77,14 @@ func (s *Session) OpenMD(path string) error {
 	if err != nil {
 		return err
 	}
+	doc, err := transcript.ParseByName(abs, string(b))
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mdPath = abs
-	s.doc = transcript.Parse(string(b))
+	s.doc = doc
 	s.hash = transcript.Hash(b)
 	s.review = transcript.LoadReview(abs)
 	s.audioPath = ""
@@ -101,7 +112,7 @@ func (s *Session) SetAudio(path string) error {
 	return nil
 }
 
-// Reload rereads the md from disk, discarding the in-memory copy.
+// Reload rereads the transcript from disk, discarding the in-memory copy.
 func (s *Session) Reload() error {
 	s.mu.Lock()
 	p := s.mdPath
@@ -109,7 +120,7 @@ func (s *Session) Reload() error {
 	if p == "" {
 		return ErrNotOpen
 	}
-	return s.OpenMD(p)
+	return s.Open(p)
 }
 
 // AudioPath returns the current audio path ("" if none).
@@ -117,6 +128,62 @@ func (s *Session) AudioPath() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.audioPath
+}
+
+// Sibling is one transcript sitting in the same folder as the open one.
+type Sibling struct {
+	Name     string `json:"name"`
+	HasAudio bool   `json:"hasAudio"` // an mp3 pairs with it
+	HasOrig  bool   `json:"hasOrig"`  // it has been saved at least once (.orig.* exists)
+	Current  bool   `json:"current"`
+}
+
+// isSiblingName reports whether name is a transcript the list should offer:
+// .md / .vtt, not a backup, not a hidden file (macOS "._X.md" droppings).
+func isSiblingName(name string) bool {
+	return !strings.HasPrefix(name, ".") && transcript.IsTranscriptName(name) && !transcript.IsOrigName(name)
+}
+
+// Siblings lists the transcripts in the open transcript's folder, in directory
+// order (the front end sorts). It is empty when nothing is open.
+func (s *Session) Siblings() ([]Sibling, error) {
+	s.mu.Lock()
+	cur := s.mdPath
+	s.mu.Unlock()
+	if cur == "" {
+		return []Sibling{}, nil
+	}
+	dir := filepath.Dir(cur)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := []Sibling{}
+	for _, e := range ents {
+		if e.IsDir() || !isSiblingName(e.Name()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		_, hasAudio := transcript.PairAudio(p)
+		_, oerr := os.Stat(transcript.OrigPath(p))
+		out = append(out, Sibling{Name: e.Name(), HasAudio: hasAudio, HasOrig: oerr == nil, Current: p == cur})
+	}
+	return out, nil
+}
+
+// OpenSibling opens another transcript from the open one's folder. Only a bare
+// file name is accepted, so the caller cannot reach outside that folder.
+func (s *Session) OpenSibling(name string) error {
+	s.mu.Lock()
+	cur := s.mdPath
+	s.mu.Unlock()
+	if cur == "" {
+		return ErrNotOpen
+	}
+	if name != filepath.Base(name) || !isSiblingName(name) {
+		return errors.New("不是同資料夾的逐字稿：" + name)
+	}
+	return s.Open(filepath.Join(filepath.Dir(cur), name))
 }
 
 // SearchDirs lists folders worth walking to find a dropped file: where the
@@ -148,6 +215,7 @@ func (s *Session) stateLocked() State {
 		Open: true, MdPath: s.mdPath, MdName: filepath.Base(s.mdPath),
 		AudioPath: s.audioPath, HasAudio: s.audioPath != "",
 		Hash: s.hash, EOL: map[string]string{"\n": "lf", "\r\n": "crlf"}[s.doc.EOL],
+		Format: s.doc.Format, Meta: s.doc.Meta,
 		Segments: make([]Seg, 0, s.doc.NumSegments()), Review: s.review,
 	}
 	if st.HasAudio {
@@ -159,7 +227,8 @@ func (s *Session) stateLocked() State {
 	for _, b := range s.doc.Segments() {
 		st.Segments = append(st.Segments, Seg{
 			ID: b.ID, StartMs: b.StartMs, Time: b.Time,
-			Body: strings.ReplaceAll(b.Body, "\r\n", "\n"),
+			Body:  strings.ReplaceAll(b.Body, "\r\n", "\n"),
+			EndMs: b.EndMs, ReadOnly: b.ReadOnly,
 		})
 	}
 	return st
@@ -188,11 +257,15 @@ func (s *Session) Save(baseHash string, edits []Edit) (State, error) {
 		return s.stateLocked(), nil
 	}
 	out := next.Render()
+	doc, err := transcript.ParseByName(s.mdPath, out) // check it reads back before touching the disk
+	if err != nil {
+		return State{}, err
+	}
 	h, err := transcript.Save(s.mdPath, []byte(out), s.hash)
 	if err != nil {
 		return State{}, err
 	}
-	s.doc = transcript.Parse(out)
+	s.doc = doc
 	s.hash = h
 	return s.stateLocked(), nil
 }
@@ -209,4 +282,67 @@ func (s *Session) SaveReview(r *transcript.Review) error {
 	}
 	s.review = r
 	return nil
+}
+
+// ErrVTTExists means the .vtt to write is already there and overwrite was not asked for.
+var ErrVTTExists = errors.New("vtt already exists")
+
+// ExportResult describes a finished (or skipped) .vtt export.
+type ExportResult struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Cues      int    `json:"cues"`
+	Replaced  bool   `json:"replaced"`  // an older .vtt was overwritten
+	Unchanged bool   `json:"unchanged"` // the existing .vtt was already identical; nothing written
+}
+
+// ExportVTT writes the WebVTT copy of the open .md next to it (X-ver1.md ->
+// X-ver1.vtt). The .md stays the source of truth: it is only read, and the
+// export is of the saved file, so it must still match the loaded hash. An
+// existing .vtt is replaced only with overwrite (atomically); status is the
+// user's declaration for the NOTE block.
+func (s *Session) ExportVTT(status string, overwrite bool) (ExportResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.doc == nil {
+		return ExportResult{}, ErrNotOpen
+	}
+	if s.doc.Format != transcript.FormatMD {
+		return ExportResult{}, errors.New("只有 .md 逐字稿能匯出成 .vtt")
+	}
+	status = strings.Join(strings.Fields(status), " ")
+	if status == "" {
+		return ExportResult{}, errors.New("請填 status（例如 proofread）")
+	}
+	b, err := os.ReadFile(s.mdPath)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if transcript.Hash(b) != s.hash {
+		return ExportResult{}, transcript.ErrConflict
+	}
+	r, err := vttexport.FromMD(s.mdPath, b, vttexport.Options{Status: status})
+	if err != nil {
+		return ExportResult{}, err
+	}
+	dst := filepath.Join(filepath.Dir(s.mdPath), r.Name)
+	res := ExportResult{Name: r.Name, Path: dst, Cues: r.Cues}
+	if old, err := os.ReadFile(dst); err == nil {
+		if string(old) == r.Text {
+			res.Unchanged = true
+			return res, nil
+		}
+		if !overwrite {
+			return res, ErrVTTExists
+		}
+		res.Replaced = true
+	}
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(s.mdPath); err == nil {
+		mode = st.Mode().Perm()
+	}
+	if err := transcript.WriteAtomic(dst, []byte(r.Text), mode); err != nil {
+		return ExportResult{}, err
+	}
+	return res, nil
 }

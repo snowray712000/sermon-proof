@@ -22,7 +22,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 建置：`go build -o sermon-proof .`；測試：`go test ./...`；執行：`./sermon-proof 檔名.md`（無參數則啟動後按「開啟」）。
 - 發行：`go run ./tools/release`（壓縮檔 + SHA256SUMS）、`go run ./tools/npmpack`（`@fhlnet/sermon-proof` 的 npm 包，optionalDependencies 結構）；版本在 `internal/version`。工具不上傳，`npm publish` 由使用者手動執行。tools 只用標準庫。Windows／Linux 的選檔視窗未實機測過。
 - 目錄：`internal/transcript`（解析／輸出／配對／存檔／review sidecar）、`internal/audio`（mp3 補 Info/Xing 標頭，修正瀏覽器 seek 偏移，見 `ai-log/2026/s4/1026c_*`）、`internal/filedlg`（osascript 選檔）、`internal/server`（HTTP API）、`web/`（前端，embed）。
-- 疑似標記 `[疑似：詞，mm:ss.mmm]` 的 regex 目前只在前端（`web/app.js`）使用，改格式時要同步檢查。
+- 疑似標記 `[疑似：詞，mm:ss.mmm]` 的 regex 目前只在前端（`web/vttview.js`，純函式、不依賴 `/api/*`）使用，改格式時要同步檢查。
+- **`.md` 是唯一來源（使用者 2026-11-02 決定）**；`.vtt` 是由 `.md` 產生的衍生副本：`internal/vttexport`（共用轉換）← `tools/mdtovtt`（`-force` 可重產）與 UI「匯出 .vtt」。AI 辨識流程與人工校正都維持產出／修改 `.md`，不要改成直接產 `.vtt`。
+- 程式仍能開／存 `.vtt`（`internal/transcript/vttdoc.go`，逐位元組 round-trip），但**不對外宣傳、不是主流程**；直接改 `.vtt` 不會回寫 `.md`。`ParseVTT`／`VTT`（`vtt.go`）是有損的，只給轉換工具驗證，不可拿來存檔。見 `ai-log/2026/s4/1102c_*`、`1102e_*`。
 
 ## Git
 

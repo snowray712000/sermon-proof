@@ -21,11 +21,11 @@ type kindInfo struct {
 }
 
 var kinds = map[string]kindInfo{
-	"md":    {"選擇逐字稿 (.md)", []string{"md"}},
+	"md":    {"選擇逐字稿 (.md / .vtt)", []string{"md", "vtt"}},
 	"audio": {"選擇音檔", []string{"mp3", "m4a", "wav"}},
 }
 
-// Pick shows the dialog for kind ("md" or "audio") and returns the chosen path.
+// Pick shows the dialog for kind ("md" = a .md or .vtt transcript, or "audio") and returns the chosen path.
 func Pick(kind string) (string, error) {
 	k, ok := kinds[kind]
 	if !ok {

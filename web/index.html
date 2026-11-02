@@ -9,12 +9,14 @@
 <body data-token="__TOKEN__">
 <div id="bar">
   <div id="top">
-    <button id="btnOpen" title="選擇逐字稿 .md">開啟</button>
+    <button id="btnOpen" title="選擇逐字稿 .md / .vtt">開啟</button>
     <button id="btnAudio" title="手動選擇音檔">音檔</button>
     <span id="fileName">尚未開啟檔案</span>
+    <span id="meta"></span>
     <span id="dirty"></span>
     <span class="spacer"></span>
     <span id="progress"></span>
+    <button id="btnExport" title="由目前這個 .md 產生同名的 .vtt（.md 是來源，.vtt 只是副本）" hidden>匯出 .vtt</button>
     <button id="btnSave" class="primary" title="⌘S">存檔</button>
   </div>
   <div id="player">
@@ -45,8 +47,12 @@
   </div>
 </div>
 <main>
-  <section id="list"><p class="empty">按左上角「開啟」選擇逐字稿 (.md)，或把檔案拖進來。</p></section>
+  <section id="list"><p class="empty">按左上角「開啟」選擇逐字稿 (.md / .vtt)，或把檔案拖進來。</p></section>
   <aside id="side">
+    <details id="files" open hidden>
+      <summary>同資料夾逐字稿 <span id="filesCount"></span></summary>
+      <ul id="fileList"></ul>
+    </details>
     <h2>存疑處</h2>
     <label class="filter"><input type="checkbox" id="onlyOpen"> 只顯示未確認</label>
     <ol id="suspects"></ol>
@@ -75,6 +81,7 @@
 </main>
 <audio id="audio" preload="metadata"></audio>
 <div id="toast" role="status"></div>
+<script src="/vttview.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

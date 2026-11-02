@@ -4,9 +4,7 @@ const TOKEN = document.body.dataset.token;
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
-// Same shape as the markers written by the transcription pipeline:
-// [疑似：詞，mm:ss.mmm]. The word itself may contain commas, so the time anchors the match.
-const SUSPECT_RE = /\[疑似[：:]([\s\S]*?)[，,](\d+(?::\d{1,3}){1,2}\.\d{3})\]/g;
+// Display / lookup logic that does not touch /api lives in vttview.js (VTTView).
 
 let S = null;            // last state from the server
 let base = [];           // saved body per segment id
@@ -59,21 +57,12 @@ function fmtClock(sec, frac) {
   const m = Math.floor(sec / 60), s = sec - m * 60;
   return pad(m) + ':' + (frac ? pad(s.toFixed(1), 4) : pad(Math.floor(s)));
 }
-function parseMs(str) {
-  const [hms, ms] = str.split('.');
-  return hms.split(':').reduce((a, p) => a * 60 + Number(p), 0) * 1000 + Number(ms);
-}
+const parseMs = VTTView.parseTimeMs;
 
 const textOf = (id) => (edits.has(id) ? edits.get(id) : base[id]);
 const leadSec = () => Number($('lead').value) || 0;
 
-function suspectsOf(text) {
-  const out = [];
-  for (const m of text.matchAll(SUSPECT_RE)) {
-    out.push({ raw: m[0], text: m[1], ms: parseMs(m[2]), index: m.index });
-  }
-  return out;
-}
+const suspectsOf = VTTView.findSuspects;
 function allSuspects() {
   const out = [];
   if (!S) return out;
@@ -94,10 +83,62 @@ function adopt(st) {
   review.suspects = review.suspects || {};
   cur = 0; pin = null; editingId = null;
   $('fileName').textContent = st.open ? st.mdName : '尚未開啟檔案';
+  $('meta').textContent = st.open ? VTTView.metaSummary(st.meta) : '';
+  $('meta').title = st.open ? VTTView.metaText(st.meta) : '';
+  $('btnExport').hidden = !(st.open && st.format === 'md');
   buildList();
   setAudio();
   restoreDraft();
   refreshAll();
+  refreshFiles();
+}
+
+// ---------- sibling transcripts (same folder as the open one) ----------
+let filesSeq = 0; // drop answers that arrive after a newer request
+async function refreshFiles() {
+  const mine = ++filesSeq;
+  const box = $('files');
+  if (!S || !S.open) { box.hidden = true; return; }
+  let list;
+  try { list = await api('GET', '/api/siblings'); } catch (e) { return; }
+  if (mine !== filesSeq) return;
+  list.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { numeric: true }));
+  const ul = $('fileList');
+  ul.textContent = '';
+  for (const f of list) {
+    const li = document.createElement('li');
+    li.className = f.current ? 'cur' : '';
+    li.title = f.current ? '目前開啟中' : '切換到 ' + f.name;
+    const name = document.createElement('span');
+    name.textContent = f.name;
+    li.append(name);
+    const tags = [];
+    if (!f.hasAudio) tags.push('無音檔');
+    if (f.hasOrig) tags.push('已存過');
+    if (tags.length) {
+      const t = document.createElement('span');
+      t.className = 'tag' + (f.hasAudio ? '' : ' warn');
+      t.textContent = tags.join(' · ');
+      li.append(t);
+    }
+    if (!f.current) li.addEventListener('click', () => openSibling(f.name));
+    ul.append(li);
+  }
+  $('filesCount').textContent = '(' + list.length + ')';
+  box.hidden = list.length < 2; // nothing to switch to
+  ul.querySelector('.cur')?.scrollIntoView({ block: 'nearest' });
+}
+
+async function openSibling(name) {
+  if (!(await guardDirty())) return;
+  // Pause first so the 'pause' handler files the position under the old transcript.
+  savePos();
+  audio.pause();
+  try {
+    const st = await api('POST', '/api/open-sibling', { name });
+    adopt(st);
+    if (!st.hasAudio) toast('找不到對應的 mp3，請按「音檔」');
+  } catch (e) { alert(e.message); }
 }
 
 function buildList() {
@@ -105,11 +146,11 @@ function buildList() {
   list.textContent = '';
   rows = [];
   if (!S.open) {
-    list.innerHTML = '<p class="empty">按左上角「開啟」選擇逐字稿 (.md)，或把檔案拖進來。</p>';
+    list.innerHTML = '<p class="empty">按左上角「開啟」選擇逐字稿 (.md / .vtt)，或把檔案拖進來。</p>';
     return;
   }
   if (S.segments.length === 0) {
-    list.innerHTML = '<p class="empty">這個檔案裡找不到以 [mm:ss.mmm] 開頭的段落（內容原樣保留，不會被改動）。</p>';
+    list.innerHTML = '<p class="empty">' + (S.format === 'vtt' ? '這個檔案裡找不到字幕 (cue)' : '這個檔案裡找不到以 [mm:ss.mmm] 開頭的段落') + '（內容原樣保留，不會被改動）。</p>';
     return;
   }
   for (const seg of S.segments) {
@@ -150,6 +191,7 @@ function buildList() {
     body.addEventListener('click', () => {
       if (!window.getSelection().isCollapsed) return; // user is selecting text to copy
       cur = seg.id;
+      if (seg.readOnly) { toast('這一段含 WebVTT 標籤或未跳脫字元，本工具不編輯'); return; }
       startEdit(seg.id);
     });
 
@@ -199,7 +241,7 @@ function refreshAll() {
     row.querySelector('input[type=checkbox]').checked = done;
     row.querySelector('.revert').hidden = !edits.has(seg.id);
   }
-  $('dirty').textContent = edits.size ? `● 未存 ${edits.size} 段` : (S.hasOrig ? '已有 .orig.md 備份' : '');
+  $('dirty').textContent = edits.size ? `● 未存 ${edits.size} 段` : (S.hasOrig ? '已有 .orig.' + S.format + ' 備份' : '');
   document.title = (edits.size ? '● ' : '') + S.mdName;
   renderSuspects();
 }
@@ -302,6 +344,7 @@ function optionsOf(word) {
 }
 
 function removeSuspect(s, replacement = s.text) {
+  if (S.segments[s.segId].readOnly) { toast('這一段含 WebVTT 標籤或未跳脫字元，本工具不編輯'); return; }
   const text = textOf(s.segId);
   const i = text.indexOf(s.raw);
   if (i < 0) return;
@@ -324,7 +367,7 @@ function autosize(ta) {
 }
 
 function startEdit(id) {
-  if (editingId === id) return;
+  if (editingId === id || S.segments[id].readOnly) return;
   if (editingId !== null) endEdit();
   const row = rows[id];
   const view = row.querySelector('.body');
@@ -438,7 +481,7 @@ async function pickAudio() {
 // ---------- drag & drop ----------
 // A page never sees a dropped file's path, so send name/size/mtime (plus any
 // file:// URIs the browser offers) and let the server work out which file it is.
-const AUDIO_EXT = /\.(mp3|m4a|wav)$/i;
+const TRANSCRIPT_EXT = /\.(md|vtt)$/i;
 let dragDepth = 0;
 
 function hasFiles(e) {
@@ -448,13 +491,13 @@ function hasFiles(e) {
 async function openDropped(files, uris) {
   files = files.filter((f) => f.name);
   if (!files.length) return;
-  if (files.some((f) => /\.md$/i.test(f.name)) && !(await guardDirty())) return;
+  if (files.some((f) => TRANSCRIPT_EXT.test(f.name)) && !(await guardDirty())) return;
   try {
     const st = await api('POST', '/api/open-dropped', {
       files: files.map((f) => ({ name: f.name, size: f.size, mtimeMs: f.lastModified })),
       uris,
     });
-    if (files.some((f) => /\.md$/i.test(f.name))) {
+    if (files.some((f) => TRANSCRIPT_EXT.test(f.name))) {
       adopt(st);
       if (!st.hasAudio) toast('找不到對應的 mp3，請按「音檔」或一起拖入');
     } else {
@@ -516,6 +559,26 @@ async function save() {
   }
 }
 
+// The .md is the source of truth; this writes its .vtt copy next to it.
+async function exportVtt() {
+  if (!S || !S.open || S.format !== 'md') return;
+  if (edits.size) { toast('請先存檔：匯出的是已存檔的版本'); return; }
+  const status = prompt('匯出 .vtt。NOTE 的 status 要寫什麼？（由你宣告，工具不會自己判斷；例如 proofread）', 'proofread');
+  if (status === null) return;
+  const send = (overwrite) => api('POST', '/api/export-vtt', { status, overwrite });
+  try {
+    let r;
+    try {
+      r = await send(false);
+    } catch (e) {
+      if (e.code !== 'exists') throw e;
+      if (!confirm(e.message + '。要用目前的 .md 重新產生並取代它嗎？\n（若有人直接改過那個 .vtt，改動會消失）')) return;
+      r = await send(true);
+    }
+    toast(r.unchanged ? r.name + ' 已是最新' : (r.replaced ? '已更新 ' : '已匯出 ') + r.name + '（' + r.cues + ' 段）');
+  } catch (e) { alert('匯出失敗：' + e.message); }
+}
+
 // ---------- audio ----------
 function setAudio() {
   const has = S && S.hasAudio;
@@ -547,13 +610,7 @@ function togglePlay() {
 }
 
 function segAt(ms) {
-  const segs = S.segments;
-  let lo = 0, hi = segs.length - 1, ans = 0;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (segs[mid].startMs <= ms) { ans = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  return ans;
+  return Math.max(0, VTTView.cueIndexAt(S.segments, ms));
 }
 
 function seekToMs(ms, id) {
@@ -672,6 +729,7 @@ function nextSuspect() {
 $('btnOpen').addEventListener('click', pickMd);
 $('btnAudio').addEventListener('click', pickAudio);
 $('btnSave').addEventListener('click', save);
+$('btnExport').addEventListener('click', exportVtt);
 $('btnPlay').addEventListener('click', togglePlay);
 $('btnBack').addEventListener('click', () => seekBy(-3));
 $('btnFwd').addEventListener('click', () => seekBy(3));
@@ -716,7 +774,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'r' || k === 'R') gotoSeg(cur, { play: true });
   else if (k === '[') { speed = SPEEDS[Math.max(0, SPEEDS.indexOf(speed) - 1)]; store('speed', String(speed)); applySpeed(); }
   else if (k === ']') { speed = SPEEDS[Math.min(SPEEDS.length - 1, SPEEDS.indexOf(speed) + 1)]; store('speed', String(speed)); applySpeed(); }
-  else if (k === 'Enter') { if (S.segments.length) startEdit(cur); }
+  else if (k === 'Enter') { if (S.segments.length && !S.segments[cur].readOnly) startEdit(cur); }
   else if (k === 'n' || k === 'N') nextSuspect();
   else if (k === 'c' || k === 'C') {
     const seg = S.segments[cur];

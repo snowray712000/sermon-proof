@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 
 	"sermonproof/internal/locate"
 	"sermonproof/internal/server"
+	"sermonproof/internal/transcript"
 	"sermonproof/internal/version"
 )
 
@@ -34,7 +34,7 @@ func main() {
 	noOpen := flag.Bool("no-open", false, "do not open the browser")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: sermon-proof [-port N] [-no-open] [-version] [檔名.md [音檔.mp3]]")
+		fmt.Fprintln(os.Stderr, "usage: sermon-proof [-port N] [-no-open] [-version] [檔名.md|檔名.vtt [音檔.mp3]]")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -49,14 +49,14 @@ func main() {
 	sess := &server.Session{}
 	var md, audio string
 	for _, a := range flag.Args() {
-		if strings.HasSuffix(strings.ToLower(a), ".md") {
+		if transcript.IsTranscriptName(a) {
 			md = a
 		} else {
 			audio = a
 		}
 	}
 	if md != "" {
-		if err := sess.OpenMD(md); err != nil {
+		if err := sess.Open(md); err != nil {
 			fmt.Fprintln(os.Stderr, "無法開啟:", err)
 			os.Exit(1)
 		}

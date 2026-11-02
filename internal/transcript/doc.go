@@ -22,16 +22,30 @@ type Block struct {
 	// Segment fields.
 	ID       int
 	StartMs  int
-	Prefix   string // e.g. "**[00:00.000]**"
+	Prefix   string // md: "**[00:00.000]**"; vtt: cue id line + timing line, with their EOLs
 	Time     string // e.g. "00:00.000"
-	Sep      string // whitespace between prefix and body
-	Body     string // text after the separator; may contain internal EOLs
+	Sep      string // whitespace between prefix and body (md only)
+	Body     string // text after the separator; may contain internal EOLs (vtt: unescaped)
 	OrigBody string // Body as parsed, to detect edits
 	EOL      string // line ending of the segment's last line ("" at EOF)
+
+	// vtt only.
+	EndMs    int
+	ReadOnly bool // payload has WebVTT tags / unescaped "&" that Body cannot represent
 }
+
+// Formats a Document can come from.
+const (
+	FormatMD  = "md"
+	FormatVTT = "vtt"
+)
 
 // Document is a parsed transcript.
 type Document struct {
+	// Format is FormatMD or FormatVTT (a Document made by hand may leave it empty = md).
+	Format string
+	// Meta is the leading NOTE block's "key: value" lines (vtt only; read only).
+	Meta   []KV
 	Blocks []Block
 	// EOL is the dominant line ending ("\r\n" or "\n"), used for new text.
 	EOL    string
@@ -56,6 +70,20 @@ func splitLines(s string) []line {
 		s = s[i+1:]
 	}
 	return out
+}
+
+// dominantEOL is "\r\n" when more than half of the lines end that way.
+func dominantEOL(lines []line) string {
+	crlf := 0
+	for _, l := range lines {
+		if l.eol == "\r\n" {
+			crlf++
+		}
+	}
+	if crlf*2 > len(lines) {
+		return "\r\n"
+	}
+	return "\n"
 }
 
 // isContinuation reports whether a line directly after a segment line belongs
@@ -95,18 +123,9 @@ func ParseTimeMs(s string) (int, error) {
 
 // Parse splits text into blocks. It never fails: anything unrecognised is Raw.
 func Parse(s string) *Document {
-	d := &Document{}
+	d := &Document{Format: FormatMD}
 	lines := splitLines(s)
-	crlf := 0
-	for _, l := range lines {
-		if l.eol == "\r\n" {
-			crlf++
-		}
-	}
-	d.EOL = "\n"
-	if crlf*2 > len(lines) {
-		d.EOL = "\r\n"
-	}
+	d.EOL = dominantEOL(lines)
 
 	for i := 0; i < len(lines); {
 		m := segRe.FindStringSubmatch(lines[i].text)
@@ -164,7 +183,7 @@ func (d *Document) Segments() []*Block {
 
 // Clone returns a deep copy.
 func (d *Document) Clone() *Document {
-	c := &Document{EOL: d.EOL}
+	c := &Document{Format: d.Format, EOL: d.EOL, Meta: d.Meta}
 	c.Blocks = append([]Block(nil), d.Blocks...)
 	c.segIdx = append([]int(nil), d.segIdx...)
 	return c
@@ -195,6 +214,11 @@ func (d *Document) Apply(edits map[int]string) (int, error) {
 		if text == b.Body {
 			continue
 		}
+		if d.Format == FormatVTT {
+			if err := checkVTTEdit(b, text); err != nil {
+				return 0, err
+			}
+		}
 		b.Body = text
 		n++
 	}
@@ -209,6 +233,10 @@ func (d *Document) Render() string {
 		b := &d.Blocks[i]
 		if !b.Segment || b.Body == b.OrigBody {
 			sb.WriteString(b.Raw)
+			continue
+		}
+		if d.Format == FormatVTT {
+			sb.WriteString(d.renderVTTCue(b))
 			continue
 		}
 		sep := b.Sep

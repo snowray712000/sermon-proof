@@ -20,14 +20,20 @@ func Hash(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// OrigPath is where the first-save backup lives: X.md -> X.orig.md.
+// OrigPath is where the first-save backup lives: X.md -> X.orig.md,
+// X.vtt -> X.orig.vtt.
 func OrigPath(md string) string {
 	return strings.TrimSuffix(md, filepath.Ext(md)) + ".orig" + filepath.Ext(md)
 }
 
-// ReviewPath is the sidecar holding checkbox state: X.md -> X.review.json.
-func ReviewPath(md string) string {
-	return strings.TrimSuffix(md, filepath.Ext(md)) + ".review.json"
+// ReviewPath is the sidecar holding checkbox state: X.md -> X.review.json,
+// X.vtt -> X.vtt.review.json. The .vtt one keeps its extension so that a .md
+// and a .vtt of the same name never share (and overwrite) one sidecar.
+func ReviewPath(tr string) string {
+	if IsVTTName(tr) {
+		return tr + ".review.json"
+	}
+	return strings.TrimSuffix(tr, filepath.Ext(tr)) + ".review.json"
 }
 
 // Save writes data over path if the file still hashes to expectHash. Before
@@ -67,6 +73,12 @@ func Save(path string, data []byte, expectHash string) (string, error) {
 		return "", err
 	}
 	return Hash(data), nil
+}
+
+// WriteAtomic writes data to path through a temp file in the same folder and a
+// rename, so a reader never sees a half-written file.
+func WriteAtomic(path string, data []byte, mode os.FileMode) error {
+	return atomicWrite(path, data, mode)
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
